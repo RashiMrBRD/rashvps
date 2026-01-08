@@ -1,55 +1,92 @@
 name: VPS
+
 on:
   workflow_dispatch:
+
 jobs:
   Svps:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    
     steps:
+      # 1. Update & Upgrade (Runs by default)
+      - name: Update & Upgrade System
+        run: |
+          sudo apt-get update
+          sudo apt-get upgrade -y
+          echo "✅ System updated and upgraded"
+
+      # 2. Setup 64GB RAM (Swap)
+      # Android builds require massive amounts of RAM. 
+      # This creates a 64GB swap file to prevent Out-Of-Memory errors during compilation.
+      - name: Increase Memory to 64GB (Swap)
+        run: |
+          echo "🧠 Setting up 64GB Swap file for heavy compiling..."
+          sudo fallocate -l 64G /swapfile || sudo truncate -s 64G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          sudo swapon --show
+          echo "✅ 64GB Swap enabled"
+
+      # 3. Maximize Storage (Safe Cleanup)
+      # We only remove junk files (logs, temp cache) while keeping Android SDKs, Docker, and .NET.
+      - name: Optimize Storage
+        run: |
+          echo "💾 Optimizing storage (Keeping SDKs, Docker, .NET)..."
+          sudo rm -rf /var/log/*
+          sudo rm -rf /tmp/*
+          sudo apt-get clean
+          sudo apt-get autoremove -y
+          df -h
+
+      # 4. Setup SSH User
       - name: setup ssh user
         run: |
-          sudo apt-get update && sudo apt-get install -y openssh-server sudo
+          sudo apt-get install -y openssh-server sudo
           
-         
           sudo useradd -m -s /bin/bash github-user
           
-         
           echo 'github-user ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/github-user
           
-        
           sudo mkdir -p /home/github-user/.ssh
           echo '${{ secrets.SSH_PUBLIC_KEY }}' | sudo tee /home/github-user/.ssh/authorized_keys
           sudo chown -R github-user:github-user /home/github-user/.ssh
           sudo chmod 700 /home/github-user/.ssh
           sudo chmod 600 /home/github-user/.ssh/authorized_keys
           
-          
           sudo sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
           
           sudo systemctl restart ssh
-          echo "✅ SSH User 'github-user' auth"
+          echo "✅ SSH User 'github-user' configured"
 
+      # 5. Download Tailscale
       - name: download tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
-          
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=vps-${{ github.run_id }}
           tsIP=$(tailscale ip -4 | head -n 1)
           echo "TAILSCALE_IP=$tsIP" >> $GITHUB_ENV
-          echo "✅ tailscale ip: $tsIP"
+          echo "✅ Tailscale IP: $tsIP"
 
+      # 6. Display Info
       - name: Display info
         run: |
-          echo "🚀  VPS is run"
+          echo "🚀 VPS for Android Build Ready"
           echo "-------------------------------------"
-          echo "📍 tailscale ip: $TAILSCALE_IP"
-          echo "👤 ssh user: github-user"
-          echo "Ex connect, use the command"
-          echo "ssh -i ~/.ssh/vps_key github-user@$TAILSCALE_IP"
+          echo "💾 Total Memory (RAM + Swap):"
+          free -h
+          echo "💽 Disk Storage Available:"
+          df -h /
           echo "-------------------------------------"
-         
+          echo "📍 Tailscale IP: $TAILSCALE_IP"
+          echo "👤 SSH user: github-user"
+          echo "To connect, use:"
+          echo "ssh -o StrictHostKeyChecking=no github-user@$TAILSCALE_IP"
+          echo "-------------------------------------"
 
+      # 7. Loop Vps
       - name: loop Vps
         run: |
           while true; do
